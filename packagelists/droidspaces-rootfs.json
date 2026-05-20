@@ -2,6 +2,8 @@
   "packages": [
     "core-packages-container",
 
+    "systemd",
+
     "shadow-utils",
 
     "iproute",
