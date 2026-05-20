@@ -1,0 +1,356 @@
+name: Build and release Azure Linux 4 preview Droidspaces rootfs
+
+on:
+  workflow_dispatch:
+    inputs:
+      azurelinux_ref:
+        description: >-
+          Azure Linux 4 source ref to build from.
+          The default is the moving 4.0 preview branch.
+        required: true
+        default: "4.0"
+        type: string
+
+      release_tag:
+        description: >-
+          Optional GitHub Release tag.
+          Leave empty to derive one from the Azure Linux commit.
+        required: false
+        default: ""
+        type: string
+
+      prerelease:
+        description: "Mark a newly created GitHub Release as a prerelease."
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    name: Build AZL4 preview rootfs and publish release
+    runs-on: ubuntu-22.04-arm
+
+    env:
+      AZURELINUX_REPO: https://github.com/microsoft/azurelinux.git
+      AZURELINUX_REF: ${{ inputs.azurelinux_ref }}
+      BUILDER_IMAGE: fedora:42
+
+    steps:
+      - name: Checkout rootfs recipe repository
+        uses: actions/checkout@v5
+
+      - name: Fetch Azure Linux 4 source
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          git clone \
+            --branch "${AZURELINUX_REF}" \
+            --depth 1 \
+            "${AZURELINUX_REPO}" \
+            azurelinux4
+
+          echo "Resolved Azure Linux 4 source:"
+          git -C azurelinux4 log --oneline --decorate -n 3
+
+      - name: Determine release metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          azl_commit="$(git -C azurelinux4 rev-parse HEAD)"
+          azl_commit_short="$(git -C azurelinux4 rev-parse --short=12 HEAD)"
+
+          azl_version="4.0-preview-${azl_commit_short}"
+
+          if [[ -n "${{ inputs.release_tag }}" ]]; then
+            release_tag="${{ inputs.release_tag }}"
+          else
+            release_tag="azurelinux-${azl_version}-droidspaces-rootfs"
+          fi
+
+          rootfs_file="azurelinux-${azl_version}-aarch64-droidspaces-rootfs.tar.gz"
+          release_title="Azure Linux ${azl_version} AArch64 Droidspaces rootfs"
+
+          {
+            echo "AZL_COMMIT=${azl_commit}"
+            echo "AZL_COMMIT_SHORT=${azl_commit_short}"
+            echo "AZL_VERSION=${azl_version}"
+            echo "RELEASE_TAG=${release_tag}"
+            echo "ROOTFS_FILE=${rootfs_file}"
+            echo "RELEASE_TITLE=${release_title}"
+          } >> "${GITHUB_ENV}"
+
+          echo "Azure Linux commit: ${azl_commit}"
+          echo "Resolved version:    ${azl_version}"
+          echo "Release tag:         ${release_tag}"
+          echo "Rootfs filename:     ${rootfs_file}"
+
+      - name: Show custom AZL4 image definition
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "===== azl4/images.droidspaces.toml ====="
+          sed -n '1,200p' azl4/images.droidspaces.toml
+
+          echo
+          echo "===== azl4/container-droidspaces/container-droidspaces.kiwi ====="
+          sed -n '1,260p' azl4/container-droidspaces/container-droidspaces.kiwi
+
+      - name: Build AZL4 rootfs with azldev in privileged Fedora builder
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          docker run --rm --privileged \
+            -e GITHUB_WORKSPACE=/workspace \
+            -v "${GITHUB_WORKSPACE}:/workspace" \
+            -w /workspace \
+            "${BUILDER_IMAGE}" \
+            bash -lc '
+              set -euo pipefail
+
+              dnf -y update
+
+              dnf -y install \
+                bash \
+                ca-certificates \
+                coreutils \
+                curl \
+                diffutils \
+                dnf5 \
+                dnf5-plugins \
+                findutils \
+                gcc \
+                git \
+                golang \
+                gzip \
+                jq \
+                make \
+                python3 \
+                python3-pip \
+                python3-devel \
+                rpm \
+                rpm-build \
+                shadow-utils \
+                sudo \
+                tar \
+                util-linux \
+                xz
+
+              python3 -m venv /opt/kiwi-venv
+              /opt/kiwi-venv/bin/pip install --upgrade pip
+              /opt/kiwi-venv/bin/pip install "kiwi==10.2.33"
+
+              ln -sf /opt/kiwi-venv/bin/kiwi-ng /usr/local/bin/kiwi-ng
+
+              echo "Host build tools:"
+              kiwi-ng --version
+              dnf5 --version
+              go version
+
+              cd /workspace/azurelinux4
+
+              export PATH="$(go env GOPATH)/bin:/usr/local/bin:${PATH}"
+
+              echo "Installing azldev version requested by the Azure Linux tree:"
+              cat .azldev-version
+
+              go install "github.com/microsoft/azure-linux-dev-tools/cmd/azldev@$(cat .azldev-version)"
+
+              echo "azldev version:"
+              azldev version || true
+
+              echo "Building custom Droidspaces rootfs image..."
+              azldev \
+                -y \
+                -v \
+                --config-file /workspace/azl4/images.droidspaces.toml \
+                image build droidspaces-rootfs \
+                --arch aarch64
+            '
+
+          # azldev/kiwi currently run under sudo/root internally.
+          # Restore ownership so subsequent Actions steps can inspect outputs.
+          sudo chown -R "$(id -u):$(id -g)" "${GITHUB_WORKSPACE}"
+
+      - name: Locate KIWI tar archive and transcode to gzip
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mkdir -p dist
+
+          echo "Searching for KIWI tbz/tar.xz output..."
+          find "${GITHUB_WORKSPACE}/azurelinux4" \
+            -type f \
+            \( -name '*.tar.xz' -o -name '*.tbz' \) \
+            | sort \
+            | tee /tmp/azl4-kiwi-archives.txt
+
+          mapfile -t archives < /tmp/azl4-kiwi-archives.txt
+
+          if [[ "${#archives[@]}" -ne 1 ]]; then
+            echo "ERROR: Expected exactly one KIWI rootfs archive."
+            echo "Found ${#archives[@]} candidate(s)."
+            exit 1
+          fi
+
+          kiwi_archive="${archives[0]}"
+
+          echo "Selected KIWI archive:"
+          echo "  ${kiwi_archive}"
+
+          echo "Transcoding xz-compressed tar stream to gzip-compressed tar stream..."
+          xz -dc "${kiwi_archive}" | gzip -9 > "dist/${ROOTFS_FILE}"
+
+          gzip -t "dist/${ROOTFS_FILE}"
+          tar -tzf "dist/${ROOTFS_FILE}" >/dev/null
+
+          echo "Generated gzip rootfs tarball:"
+          ls -lh "dist/${ROOTFS_FILE}"
+
+      - name: Validate Droidspaces boot contract
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          validation_root="${GITHUB_WORKSPACE}/validation-root"
+          rm -rf "${validation_root}"
+          mkdir -p "${validation_root}"
+
+          sudo tar -xzpf "dist/${ROOTFS_FILE}" -C "${validation_root}"
+
+          echo "Top-level rootfs layout:"
+          sudo find "${validation_root}" -maxdepth 2 -mindepth 1 \
+            | sed "s#^${validation_root}##" \
+            | sort \
+            | head -n 200
+
+          echo
+          echo "Validating from inside the extracted AArch64 rootfs..."
+
+          sudo chroot "${validation_root}" /bin/bash -lc '
+            set -euo pipefail
+
+            echo "Checking Droidspaces init path..."
+            test -e /sbin/init
+            test -x /sbin/init
+            ls -l /sbin /sbin/init || true
+
+            echo
+            echo "Checking package manager..."
+            command -v dnf5
+            dnf5 --version || true
+
+            echo
+            echo "Checking curl presence..."
+            command -v curl
+            curl --version | head -n 2 || true
+
+            echo
+            echo "Checking basic OS identity..."
+            cat /etc/os-release || true
+          '
+
+          echo
+          echo "Droidspaces rootfs validation passed."
+
+          sudo rm -rf "${validation_root}"
+
+      - name: Generate checksum and release notes
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          (
+            cd dist
+            sha256sum "${ROOTFS_FILE}" > SHA256SUMS
+          )
+
+          cat > dist/RELEASE_NOTES.md <<EOF
+          ## Azure Linux 4 Preview AArch64 Droidspaces rootfs
+
+          This release contains a gzip-compressed Azure Linux 4 preview userspace rootfs tarball
+          intended for use with Droidspaces.
+
+          ### Build identity
+
+          - Azure Linux ref requested: \`${AZURELINUX_REF}\`
+          - Azure Linux resolved commit: \`${AZL_COMMIT}\`
+          - Architecture: \`aarch64\`
+          - Build family: Azure Linux 4 preview
+
+          ### Assets
+
+          - \`${ROOTFS_FILE}\`
+          - \`SHA256SUMS\`
+
+          ### Scope
+
+          This is:
+
+          - a userspace root filesystem tarball,
+          - built from the Azure Linux 4 preview branch,
+          - assembled through the Azure Linux 4 TOML + azldev + KIWI NG image workflow,
+          - compressed with gzip for Droidspaces use.
+
+          This is not:
+
+          - a Linux kernel image,
+          - an initramfs,
+          - a bootable disk image,
+          - an ISO,
+          - a VM image,
+          - an OCI image release artifact.
+
+          ### Experimental status
+
+          Azure Linux 4 is still a preview/development branch.
+          This Droidspaces rootfs should be treated as experimental.
+          EOF
+
+          echo "Prepared release assets:"
+          ls -lh dist
+          echo
+          echo "SHA256SUMS:"
+          cat dist/SHA256SUMS
+
+      - name: Create or update GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          if gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
+            echo "Updating existing release: ${RELEASE_TAG}"
+
+            gh release edit "${RELEASE_TAG}" \
+              --title "${RELEASE_TITLE}" \
+              --notes-file dist/RELEASE_NOTES.md
+
+            gh release upload "${RELEASE_TAG}" \
+              "dist/${ROOTFS_FILE}" \
+              dist/SHA256SUMS \
+              --clobber
+          else
+            echo "Creating new release: ${RELEASE_TAG}"
+
+            create_args=()
+            if [[ "${{ inputs.prerelease }}" == "true" ]]; then
+              create_args+=(--prerelease)
+            fi
+
+            gh release create "${RELEASE_TAG}" \
+              "dist/${ROOTFS_FILE}" \
+              dist/SHA256SUMS \
+              --target "${GITHUB_SHA}" \
+              --title "${RELEASE_TITLE}" \
+              --notes-file dist/RELEASE_NOTES.md \
+              "${create_args[@]}"
+          fi
