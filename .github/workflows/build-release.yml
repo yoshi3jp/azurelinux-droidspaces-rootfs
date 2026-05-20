@@ -198,23 +198,47 @@ jobs:
           
           echo "Validating Droidspaces init contract..."
 
-          tar_entries="$(tar -tzf "${generated_tarball}")"
+          validation_root="$(mktemp -d)"
+          tar -xzf "${generated_tarball}" -C "${validation_root}"
 
-          if ! grep -qxE '(\./)?sbin/init' <<< "${tar_entries}"; then
-            echo "ERROR: rootfs tarball does not contain /sbin/init."
-            echo "Droidspaces expects /sbin/init as the container startup entrypoint."
+          if [[ ! -L "${validation_root}/sbin" ]]; then
+            echo "ERROR: /sbin is not a symlink in the rootfs."
             exit 1
           fi
 
-          if ! grep -qxE '(\./)?usr/lib/systemd/systemd|(\./)?lib/systemd/systemd' <<< "${tar_entries}"; then
-            echo "ERROR: rootfs tarball contains /sbin/init, but no obvious systemd PID 1 binary."
-            echo "Expected one of:"
-            echo "  /usr/lib/systemd/systemd"
-            echo "  /lib/systemd/systemd"
+          sbin_target="$(readlink "${validation_root}/sbin")"
+          if [[ "${sbin_target}" != "usr/sbin" ]]; then
+            echo "ERROR: /sbin points to '${sbin_target}', expected 'usr/sbin'."
             exit 1
           fi
 
-          echo "Droidspaces init contract validated."
+          if [[ ! -L "${validation_root}/usr/sbin/init" ]]; then
+            echo "ERROR: /usr/sbin/init is not a symlink in the rootfs."
+            exit 1
+          fi
+
+          init_target="$(readlink "${validation_root}/usr/sbin/init")"
+          if [[ "${init_target}" != "../lib/systemd/systemd" ]]; then
+            echo "ERROR: /usr/sbin/init points to '${init_target}', expected '../lib/systemd/systemd'."
+            exit 1
+          fi
+
+          if [[ ! -x "${validation_root}/usr/lib/systemd/systemd" ]]; then
+            echo "ERROR: /usr/lib/systemd/systemd is missing or not executable."
+            exit 1
+          fi
+
+          if [[ ! -e "${validation_root}/sbin/init" ]]; then
+            echo "ERROR: /sbin/init does not resolve after following symlinks."
+            exit 1
+          fi
+
+          echo "Droidspaces init contract validated:"
+          echo "  /sbin -> usr/sbin"
+          echo "  /usr/sbin/init -> ../lib/systemd/systemd"
+          echo "  /usr/lib/systemd/systemd exists and is executable"
+
+          rm -rf "${validation_root}"
 
           cp "${generated_tarball}" "${dist_dir}/${ROOTFS_FILE}"
 
