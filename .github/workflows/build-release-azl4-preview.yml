@@ -153,29 +153,57 @@ jobs:
               dnf5 --version
               go version
 
-              cd /workspace/azurelinux4
+              workspace_uid="$(stat -c "%u" /workspace)"
+              workspace_gid="$(stat -c "%g" /workspace)"
 
-              export PATH="$(go env GOPATH)/bin:/usr/local/bin:${PATH}"
+              echo "Workspace UID:GID = ${workspace_uid}:${workspace_gid}"
 
-              echo "Installing azldev version requested by the Azure Linux tree:"
-              cat .azldev-version
+              if ! getent group "${workspace_gid}" >/dev/null; then
+                groupadd -g "${workspace_gid}" azlbuild
+              fi
 
-              go install "github.com/microsoft/azure-linux-dev-tools/cmd/azldev@$(cat .azldev-version)"
+              if getent passwd "${workspace_uid}" >/dev/null; then
+                build_user="$(getent passwd "${workspace_uid}" | cut -d: -f1)"
+              else
+                useradd \
+                  --create-home \
+                  --uid "${workspace_uid}" \
+                  --gid "${workspace_gid}" \
+                  --shell /bin/bash \
+                  azlbuild
+                build_user="azlbuild"
+              fi
 
-              echo "azldev version:"
-              azldev version || true
+              echo "${build_user} ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/azlbuild
+              chmod 0440 /etc/sudoers.d/azlbuild
 
-              echo "Building custom Droidspaces rootfs image..."
-              azldev \
-                -y \
-                -v \
-                --config-file /workspace/azl4/images.droidspaces.toml \
-                image build droidspaces-rootfs \
-                --arch aarch64
+              echo "Using non-root azldev build user: ${build_user}"
+
+              sudo -u "${build_user}" -H bash -lc "
+                set -euo pipefail
+
+                cd /workspace/azurelinux4
+
+                export PATH=\"\$(go env GOPATH)/bin:/usr/local/bin:\${PATH}\"
+
+                echo \"Installing azldev version requested by the Azure Linux tree:\"
+                cat .azldev-version
+
+                go install \"github.com/microsoft/azure-linux-dev-tools/cmd/azldev@\$(cat .azldev-version)\"
+
+                echo \"azldev version:\"
+                azldev version
+
+                echo \"Building custom Droidspaces rootfs image...\"
+                azldev \
+                  -y \
+                  -v \
+                  --config-file /workspace/azl4/images.droidspaces.toml \
+                  image build droidspaces-rootfs \
+                  --arch aarch64
+              "
             '
 
-          # azldev/kiwi currently run under sudo/root internally.
-          # Restore ownership so subsequent Actions steps can inspect outputs.
           sudo chown -R "$(id -u):$(id -g)" "${GITHUB_WORKSPACE}"
 
       - name: Locate KIWI tar archive and transcode to gzip
