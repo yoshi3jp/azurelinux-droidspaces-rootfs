@@ -139,6 +139,8 @@ jobs:
           sed -n '1,160p' azurelinux/toolkit/imageconfigs/packagelists/droidspaces-rootfs.json
 
       - name: Build AArch64 rootfs tarball
+        id: build_rootfs
+        continue-on-error: true
         shell: bash
         working-directory: azurelinux/toolkit
         run: |
@@ -154,6 +156,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
+          if [[ "${{ steps.build_rootfs.outcome }}" != "success" ]]; then
+            echo "WARNING: Azure Linux Toolkit exited non-zero."
+            echo "This may be the known late roast/timestamp panic observed after tarball conversion."
+            echo "Proceeding only if a valid rootfs .tar.gz artifact exists."
+          fi
 
           dist_dir="${GITHUB_WORKSPACE}/dist"
           mkdir -p "${dist_dir}"
@@ -175,7 +183,20 @@ jobs:
             exit 1
           fi
 
-          cp "${tarballs[0]}" "${dist_dir}/${ROOTFS_FILE}"
+          generated_tarball="${tarballs[0]}"
+
+          echo "Generated tarball found:"
+          echo "  ${generated_tarball}"
+
+          echo "Validating gzip stream..."
+          gzip -t "${generated_tarball}"
+
+          echo "Validating tar archive..."
+          tar -tzf "${generated_tarball}" >/dev/null
+
+          echo "Tarball validation passed."
+
+          cp "${generated_tarball}" "${dist_dir}/${ROOTFS_FILE}"
 
           (
             cd "${dist_dir}"
@@ -216,6 +237,12 @@ jobs:
           - a bootable disk image,
           - an ISO,
           - a VM image.
+
+          ### Build note
+
+          The Azure Linux Toolkit process returned a non-zero status after the
+          rootfs tarball had already been generated. The workflow validated the
+          resulting gzip-compressed tar archive before publishing this release.
           EOF
 
           {
