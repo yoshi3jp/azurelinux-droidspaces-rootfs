@@ -1,0 +1,9 @@
+[images.droidspaces-rootfs]
+description = "Azure Linux 4 preview AArch64 system-container rootfs for Droidspaces"
+definition = { type = "kiwi", path = "container-droidspaces/container-droidspaces.kiwi", profile = "droidspaces" }
+
+[images.droidspaces-rootfs.capabilities]
+machine-bootable = false
+container = true
+systemd = true
+runtime-package-management = true
