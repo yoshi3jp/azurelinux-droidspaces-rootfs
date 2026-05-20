@@ -1,0 +1,95 @@
+<?xml version="1.0" encoding="utf-8"?>
+
+<?xml-model href="https://raw.githubusercontent.com/OSInside/kiwi/refs/tags/v10.2.33/kiwi/schema/kiwi.rng" type="application/xml"?>
+
+<image schemaversion="8.3" name="azl4-droidspaces-rootfs">
+
+  <description type="system">
+    <author>Azure Linux Droidspaces Rootfs Builder</author>
+    <contact>user@example.com</contact>
+    <specification>
+      Azure Linux 4 preview AArch64 system-container rootfs for Droidspaces.
+    </specification>
+  </description>
+
+  <profiles>
+    <profile
+      name="droidspaces"
+      description="Droidspaces system-container rootfs with systemd, dnf5, and TLS support"
+      import="false" />
+  </profiles>
+
+  <preferences arch="aarch64">
+    <version>0.1</version>
+    <packagemanager>dnf5</packagemanager>
+    <release-version>4.0</release-version>
+
+    <!--
+      KIWI's tbz image type emits a simple root-tree tar archive compressed with xz.
+      CI will transcode the compressor only, producing our final .tar.gz release artifact.
+    -->
+    <type image="tbz" />
+  </preferences>
+
+  <!--
+    This mirrors the Azure Linux 4 preview container/VM image definitions:
+    for local builds, the 4.0 branch currently points at the AZL4 dev RPM repository.
+  -->
+  <repository type="rpm-md" alias="azurelinux-base">
+    <source path="https://stcontroltowerdevjwisitg.blob.core.windows.net/azl4-dev/base/$basearch" />
+  </repository>
+
+  <!--
+    Runtime rootfs contents.
+
+    We start from the conceptual Azure Linux 4 container base:
+      - filesystem
+      - bash
+      - azurelinux-release-container
+      - azurelinux-repos
+
+    Then add what Droidspaces needs or what we already found necessary in AZL3:
+      - systemd for /sbin/init-style system-container startup
+      - dnf5 for package installation
+      - ca-certificates and curl for practical HTTPS usage
+      - basic administration / diagnostics tools
+  -->
+  <packages type="image" profiles="droidspaces">
+    <package name="filesystem" />
+    <package name="bash" />
+    <package name="azurelinux-release-container" />
+    <package name="azurelinux-repos" />
+
+    <package name="systemd" />
+
+    <package name="dnf5" />
+    <package name="dnf5-plugins" />
+    <package name="rpm" />
+
+    <package name="ca-certificates" />
+    <package name="curl" />
+
+    <package name="coreutils" />
+    <package name="shadow-utils" />
+
+    <package name="iproute" />
+    <package name="iputils" />
+    <package name="procps-ng" />
+
+    <package name="tar" />
+    <package name="gzip" />
+    <package name="util-linux" />
+    <package name="which" />
+  </packages>
+
+  <!--
+    Bootstrap the root filesystem with the same foundational pieces used
+    by Azure Linux 4's own container-base KIWI definition.
+  -->
+  <packages type="bootstrap" profiles="droidspaces">
+    <package name="filesystem" />
+    <package name="azurelinux-release-container" />
+    <package name="azurelinux-repos" />
+  </packages>
+
+</image>
