@@ -1,0 +1,25 @@
+{
+  "Disks": [
+    {
+      "Artifacts": [
+        {
+          "Name": "azurelinux-droidspaces-rootfs",
+          "Compression": "tar.gz"
+        }
+      ]
+    }
+  ],
+  "SystemConfigs": [
+    {
+      "Name": "DroidspacesRootfs",
+      "PackageLists": [
+        "packagelists/droidspaces-rootfs.json"
+      ],
+      "PostInstallScripts": [
+        {
+          "Path": "postinstallscripts/core-container/cleanup.sh"
+        }
+      ]
+    }
+  ]
+}
