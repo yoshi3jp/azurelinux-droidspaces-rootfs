@@ -1,0 +1,16 @@
+{
+  "packages": [
+    "core-packages-container",
+
+    "shadow-utils",
+
+    "iproute",
+    "iputils",
+
+    "procps-ng",
+
+    "tar",
+    "util-linux",
+    "which"
+  ]
+}
