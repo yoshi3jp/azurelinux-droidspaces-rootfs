@@ -1,0 +1,265 @@
+name: Build and release Azure Linux Droidspaces rootfs
+
+on:
+  workflow_dispatch:
+    inputs:
+      azurelinux_ref:
+        description: >-
+          Azure Linux Git ref to build from.
+          Use 3.0-stable for the current validated 3.0 release,
+          or a monthly release tag such as 3.0.20260517-3.0 for reproducibility.
+        required: true
+        default: "3.0-stable"
+        type: string
+
+      release_tag:
+        description: >-
+          Optional GitHub Release tag to create or update.
+          Leave empty to derive one from the resolved Azure Linux release.
+        required: false
+        default: ""
+        type: string
+
+      prerelease:
+        description: "Mark a newly created GitHub Release as a prerelease."
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    name: Build rootfs and publish release
+    runs-on: ubuntu-22.04-arm
+
+    env:
+      AZURELINUX_REPO: https://github.com/microsoft/azurelinux.git
+      AZURELINUX_REF: ${{ inputs.azurelinux_ref }}
+
+    steps:
+      - name: Checkout build recipe repository
+        uses: actions/checkout@v5
+
+      - name: Fetch Azure Linux source
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mkdir -p azurelinux
+          cd azurelinux
+
+          git init .
+          git remote add origin "${AZURELINUX_REPO}"
+
+          # Fetch the requested ref plus tags.
+          # This supports 3.0-stable and monthly release tags.
+          git fetch --force --tags origin "${AZURELINUX_REF}"
+          git checkout --detach FETCH_HEAD
+
+          echo "Resolved Azure Linux source:"
+          git log --oneline --decorate -n 3
+
+      - name: Determine release metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          azl_commit="$(git -C azurelinux rev-parse HEAD)"
+          azl_commit_short="$(git -C azurelinux rev-parse --short=12 HEAD)"
+
+          # Prefer a monthly Azure Linux release tag if one points at this commit.
+          # Example: 3.0.20260517-3.0
+          azl_point_tag="$(
+            git -C azurelinux tag --points-at HEAD \
+              | grep -E '^3\.0\.[0-9]{8}-3\.0$' \
+              | sort -V \
+              | tail -n 1 \
+              || true
+          )"
+
+          if [[ -n "${azl_point_tag}" ]]; then
+            azl_version="${azl_point_tag}"
+          else
+            ref_safe="$(
+              printf '%s' "${AZURELINUX_REF}" \
+                | sed 's#[^A-Za-z0-9._-]#-#g'
+            )"
+            azl_version="${ref_safe}-${azl_commit_short}"
+          fi
+
+          if [[ -n "${{ inputs.release_tag }}" ]]; then
+            release_tag="${{ inputs.release_tag }}"
+          else
+            release_tag="azurelinux-${azl_version}-droidspaces-rootfs"
+          fi
+
+          rootfs_file="azurelinux-${azl_version}-aarch64-droidspaces-rootfs.tar.gz"
+          release_title="Azure Linux ${azl_version} AArch64 Droidspaces rootfs"
+
+          {
+            echo "AZL_COMMIT=${azl_commit}"
+            echo "AZL_COMMIT_SHORT=${azl_commit_short}"
+            echo "AZL_VERSION=${azl_version}"
+            echo "RELEASE_TAG=${release_tag}"
+            echo "ROOTFS_FILE=${rootfs_file}"
+            echo "RELEASE_TITLE=${release_title}"
+          } >> "${GITHUB_ENV}"
+
+          echo "Azure Linux commit: ${azl_commit}"
+          echo "Resolved version:    ${azl_version}"
+          echo "Release tag:         ${release_tag}"
+          echo "Rootfs filename:     ${rootfs_file}"
+
+      - name: Install Azure Linux Toolkit prerequisites
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo make -C azurelinux/toolkit install-prereqs-and-configure
+
+      - name: Inject Droidspaces rootfs build configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          install -D -m 0644 \
+            imageconfigs/droidspaces-rootfs.json \
+            azurelinux/toolkit/imageconfigs/droidspaces-rootfs.json
+
+          install -D -m 0644 \
+            packagelists/droidspaces-rootfs.json \
+            azurelinux/toolkit/imageconfigs/packagelists/droidspaces-rootfs.json
+
+          echo "Installed custom image config:"
+          sed -n '1,160p' azurelinux/toolkit/imageconfigs/droidspaces-rootfs.json
+
+          echo
+          echo "Installed custom package list:"
+          sed -n '1,160p' azurelinux/toolkit/imageconfigs/packagelists/droidspaces-rootfs.json
+
+      - name: Build AArch64 rootfs tarball
+        shell: bash
+        working-directory: azurelinux/toolkit
+        run: |
+          set -euo pipefail
+
+          sudo make image \
+            -j"$(nproc)" \
+            CONFIG_FILE=./imageconfigs/droidspaces-rootfs.json \
+            REBUILD_TOOLS=y \
+            REBUILD_PACKAGES=n
+
+      - name: Collect tarball and generate checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          dist_dir="${GITHUB_WORKSPACE}/dist"
+          mkdir -p "${dist_dir}"
+
+          mapfile -t tarballs < <(
+            find "${GITHUB_WORKSPACE}/azurelinux/out/images" \
+              -type f \
+              -name '*.tar.gz' \
+              | sort
+          )
+
+          if [[ "${#tarballs[@]}" -ne 1 ]]; then
+            echo "Expected exactly one generated .tar.gz rootfs artifact."
+            echo "Found ${#tarballs[@]}:"
+            printf '  %s\n' "${tarballs[@]:-}"
+            echo
+            echo "Full out/images tree:"
+            find "${GITHUB_WORKSPACE}/azurelinux/out/images" -maxdepth 4 -type f | sort || true
+            exit 1
+          fi
+
+          cp "${tarballs[0]}" "${dist_dir}/${ROOTFS_FILE}"
+
+          (
+            cd "${dist_dir}"
+            sha256sum "${ROOTFS_FILE}" > SHA256SUMS
+          )
+
+          cat > "${dist_dir}/RELEASE_NOTES.md" <<EOF
+          ## Azure Linux AArch64 Droidspaces rootfs
+
+          This release contains a gzip-compressed Azure Linux userspace rootfs tarball
+          intended for use with Droidspaces.
+
+          ### Build identity
+
+          - Azure Linux ref requested: \`${AZURELINUX_REF}\`
+          - Azure Linux resolved version: \`${AZL_VERSION}\`
+          - Azure Linux source commit: \`${AZL_COMMIT}\`
+          - Architecture: \`aarch64\`
+
+          ### Assets
+
+          - \`${ROOTFS_FILE}\`
+          - \`SHA256SUMS\`
+
+          ### Scope
+
+          This is:
+
+          - a userspace root filesystem tarball,
+          - built by the Azure Linux Toolkit,
+          - compressed with gzip,
+          - intended to be imported or unpacked for Droidspaces use.
+
+          This is not:
+
+          - a Linux kernel image,
+          - an initramfs,
+          - a bootable disk image,
+          - an ISO,
+          - a VM image.
+          EOF
+
+          {
+            echo "DIST_DIR=${dist_dir}"
+            echo "RELEASE_NOTES=${dist_dir}/RELEASE_NOTES.md"
+          } >> "${GITHUB_ENV}"
+
+          echo "Prepared release assets:"
+          ls -lh "${dist_dir}"
+          echo
+          echo "Checksums:"
+          cat "${dist_dir}/SHA256SUMS"
+
+      - name: Create or update GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          if gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
+            echo "Updating existing release: ${RELEASE_TAG}"
+
+            gh release edit "${RELEASE_TAG}" \
+              --title "${RELEASE_TITLE}" \
+              --notes-file "${RELEASE_NOTES}"
+
+            gh release upload "${RELEASE_TAG}" \
+              "${DIST_DIR}/${ROOTFS_FILE}" \
+              "${DIST_DIR}/SHA256SUMS" \
+              --clobber
+          else
+            echo "Creating new release: ${RELEASE_TAG}"
+
+            create_args=()
+            if [[ "${{ inputs.prerelease }}" == "true" ]]; then
+              create_args+=(--prerelease)
+            fi
+
+            gh release create "${RELEASE_TAG}" \
+              "${DIST_DIR}/${ROOTFS_FILE}" \
+              "${DIST_DIR}/SHA256SUMS" \
+              --target "${GITHUB_SHA}" \
+              --title "${RELEASE_TITLE}" \
+              --notes-file "${RELEASE_NOTES}" \
+              "${create_args[@]}"
+          fi
