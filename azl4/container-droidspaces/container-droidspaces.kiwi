@@ -80,6 +80,7 @@
     <package name="gzip" />
     <package name="util-linux" />
     <package name="which" />
+    <package name="awk" />
   </packages>
 
   <!--
