@@ -195,6 +195,26 @@ jobs:
           tar -tzf "${generated_tarball}" >/dev/null
 
           echo "Tarball validation passed."
+          
+          echo "Validating Droidspaces init contract..."
+
+          tar_entries="$(tar -tzf "${generated_tarball}")"
+
+          if ! grep -qxE '(\./)?sbin/init' <<< "${tar_entries}"; then
+            echo "ERROR: rootfs tarball does not contain /sbin/init."
+            echo "Droidspaces expects /sbin/init as the container startup entrypoint."
+            exit 1
+          fi
+
+          if ! grep -qxE '(\./)?usr/lib/systemd/systemd|(\./)?lib/systemd/systemd' <<< "${tar_entries}"; then
+            echo "ERROR: rootfs tarball contains /sbin/init, but no obvious systemd PID 1 binary."
+            echo "Expected one of:"
+            echo "  /usr/lib/systemd/systemd"
+            echo "  /lib/systemd/systemd"
+            exit 1
+          fi
+
+          echo "Droidspaces init contract validated."
 
           cp "${generated_tarball}" "${dist_dir}/${ROOTFS_FILE}"
 
