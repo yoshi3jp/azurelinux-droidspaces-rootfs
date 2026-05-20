@@ -131,6 +131,10 @@ jobs:
             packagelists/droidspaces-rootfs.json \
             azurelinux/toolkit/imageconfigs/packagelists/droidspaces-rootfs.json
 
+          install -D -m 0755 \
+            postinstallscripts/droidspaces-rootfs/configure-networkd-eth0.sh \
+            azurelinux/toolkit/imageconfigs/postinstallscripts/droidspaces-rootfs/configure-networkd-eth0.sh
+
           echo "Installed custom image config:"
           sed -n '1,160p' azurelinux/toolkit/imageconfigs/droidspaces-rootfs.json
 
