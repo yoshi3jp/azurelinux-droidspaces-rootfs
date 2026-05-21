@@ -57,11 +57,16 @@
   <packages type="image" profiles="droidspaces">
     <package name="filesystem" />
     <package name="bash" />
+    <package name="bash-completion" />
+    <package name="glibc-all-langpacks" />
+
     <package name="azurelinux-release-container" />
     <package name="azurelinux-repos" />
 
     <package name="systemd" />
         <package name="systemd-networkd" />
+        <package name="systemd-udev" />
+        <package name="systemd-resolved" />
     <package name="libxcb-devel" />
 
     <package name="dnf5" />
@@ -76,10 +81,16 @@
 
     <package name="shadow-utils" />
 
+    <package name="iptables-legacy" />
     <package name="iproute" />
     <package name="iputils" />
     <package name="procps-ng" />
+    <package name="openssh-server" />
+    <package name="bind-utils" />
+    <package name="net-tools" />
 
+    <package name="dbus" />
+    <package name="kmod" />
     <package name="tar" />
     <package name="gzip" />
     <package name="bzip2" />
