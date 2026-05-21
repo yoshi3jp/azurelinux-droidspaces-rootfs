@@ -3,13 +3,38 @@
     "core-packages-container",
 
     "systemd",
+    "systemd-udev",
+    "systemd-resolved",
 
     "shadow-utils",
 
     "iproute",
     "iputils",
+    "curl",
+    "wget",
+    "ca-certificates",
+    "git",
+    "openssh-server",
+    "net-tools",
+    "iptables",
+    "bind-utils",
 
     "procps-ng",
+
+    "bash",
+    "dialog",
+    "file",
+    "glibc-locales-all",
+    "bash-completion",
+    "findutils",
+    "coreutils",
+    "grep",
+    "sed",
+    "nano",
+    "sudo",
+
+    "dbus",
+    "kmod",
 
     "tar",
     "util-linux",
