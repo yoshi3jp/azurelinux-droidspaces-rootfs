@@ -62,13 +62,17 @@
 
     <package name="systemd" />
         <package name="systemd-networkd" />
+    <package name="libxcb-devel" />
 
     <package name="dnf5" />
     <package name="dnf5-plugins" />
     <package name="rpm" />
+    <package name="git" />
+    <package name="cmake" />
 
     <package name="ca-certificates" />
     <package name="curl" />
+    <package name="wget" />
 
     <package name="shadow-utils" />
 
@@ -78,6 +82,9 @@
 
     <package name="tar" />
     <package name="gzip" />
+    <package name="bzip2" />
+    <package name="xz" />
+    <package name="diffutils" />
     <package name="util-linux" />
     <package name="which" />
     <package name="awk" />
