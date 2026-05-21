@@ -21,5 +21,4 @@ echo "Installed Droidspaces NAT DHCP profile:"
 echo "  /etc/systemd/network/20-eth0.network"
 
 # Configure iptables-legacy (MANDATORY for Android compatibility)
-update-alternatives --set iptables /usr/sbin/iptables-legacy && \
-update-alternatives --set ip6tables /usr/sbin/ip6tables-legacy
+update-alternatives --set iptables /usr/sbin/iptables-legacy 
